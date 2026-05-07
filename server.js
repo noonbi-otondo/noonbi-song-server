@@ -22,8 +22,24 @@ const io = new Server(server, {
 let queue = [];
 let history = [];
 let currentSong = null;
+let playbackState = {
+  paused: false,
+  pausedAt: 0,
+};
 let chat = [];
 
+function startSong(song) {
+  if (!song) {
+    currentSong = null;
+    return;
+  }
+
+  currentSong = {
+    ...song,
+    startedAt: Date.now(),
+    isPlaying: true,
+  };
+}
 function makeId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -79,12 +95,13 @@ async function searchYouTube(query) {
 }
 
 function broadcastState() {
-  io.emit("state", {
-    queue,
-    history,
-    currentSong,
-    chat,
-  });
+io.emit("state", {
+  queue,
+  history,
+  currentSong,
+  chat,
+  playbackState,
+});
 }
 
 io.on("connection", (socket) => {
@@ -121,7 +138,7 @@ io.on("connection", (socket) => {
           });
         }
 
-        currentSong = queue.shift() || null;
+        startSong(queue.shift() || null);
         broadcastState();
         return;
       }
@@ -166,7 +183,7 @@ io.on("connection", (socket) => {
       };
 
       if (!currentSong) {
-        currentSong = song;
+        startSong(song);
       } else {
         queue.push(song);
       }
@@ -203,9 +220,33 @@ io.on("connection", (socket) => {
 
     if (history.length > 100) history = history.slice(0, 100);
 
-    currentSong = queue.shift() || null;
+    startSong(queue.shift() || null);
     broadcastState();
   });
+  socket.on("pauseSong", ({ currentTime }) => {
+  playbackState.paused = true;
+  playbackState.pausedAt = currentTime;
+
+  io.emit("forcePause", {
+    currentTime,
+  });
+
+  broadcastState();
+});
+
+socket.on("resumeSong", ({ currentTime }) => {
+  playbackState.paused = false;
+
+  if (currentSong) {
+    currentSong.startedAt = Date.now() - currentTime * 1000;
+  }
+
+  io.emit("forcePlay", {
+    currentTime,
+  });
+
+  broadcastState();
+});
 });
 
 app.get("/", (req, res) => {
